@@ -7,13 +7,14 @@ use App\Models\Category;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\Rules\Can;
+use Illuminate\Support\Facades\Storage;
 
 class CategoryController extends Controller
 {
 
 
     public function index(){
-        $categories = Category::all();
+        $categories = Category::withCount('products')->get();
         return response()->json([
             'status' => 200,
             'data' => $categories,
@@ -23,27 +24,36 @@ class CategoryController extends Controller
     {
         $validator = Validator::make($request->all(), [
             'name' => 'required|string|max:255',
-            'description' => 'nullable|string|max:300',
+            'description' => 'nullable|string|max:500',
             'status' => 'required|integer|in:0,1',
+            'image' => 'nullable|image|mimes:jpg,jpeg,png,webp|max:2048',
         ]);
         if ($validator->fails()) {
             return response()->json([
                 'status' => 400,
                 'errors' => $validator->errors(),
-            ],400);
+            ], 400);
         }
+
+        $imagePath = null;
+        if ($request->hasFile('image')) {
+            $path = $request->file('image')->store('uploads/categories', 'public');
+            $imagePath = '/storage/' . $path;
+        }
+
         // Create and save the new category
         $category = new Category();
         $category->name = $request->input('name');
         $category->description = $request->input('description');
         $category->status = $request->input('status');
+        $category->image = $imagePath;
         $category->save();
 
         return response()->json([
             'status' => 200,
             'message' => 'Category created successfully',
             'data' => $category
-        ],200);
+        ], 200);
     }
     // show category by id
     public function show($id)
@@ -73,7 +83,9 @@ class CategoryController extends Controller
         }
         $validator = Validator::make($request->all(), [
             'name' => 'sometimes|required|string|max:255',
-            'description' => 'nullable|string|max:300',
+            'description' => 'nullable|string|max:500',
+            'status' => 'sometimes|integer|in:0,1',
+            'image' => 'nullable|image|mimes:jpg,jpeg,png,webp|max:2048',
         ]);
         if ($validator->fails()) {
             return response()->json([
@@ -82,9 +94,26 @@ class CategoryController extends Controller
             ]);
         }
         // Update the category
-        $category->name = $request->name;
-        $category->description = $request->description;
-        $category->status = $request->status;
+        if ($request->has('name')) {
+            $category->name = $request->name;
+        }
+        if ($request->has('description')) {
+            $category->description = $request->description;
+        }
+        if ($request->has('status')) {
+            $category->status = $request->status;
+        }
+
+        if ($request->hasFile('image')) {
+            // Delete previous image if exists
+            if ($category->image) {
+                $oldPath = str_replace('/storage/', '', $category->image);
+                Storage::disk('public')->delete($oldPath);
+            }
+            $path = $request->file('image')->store('uploads/categories', 'public');
+            $category->image = '/storage/' . $path;
+        }
+
         $category->save();
 
         return response()->json([

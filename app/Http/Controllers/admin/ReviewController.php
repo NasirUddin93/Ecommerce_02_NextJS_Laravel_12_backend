@@ -5,12 +5,19 @@ namespace App\Http\Controllers\admin;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use App\Models\Review;
+use App\Models\Order;
+use App\Models\User;
+use Illuminate\Support\Facades\DB;
 
 class ReviewController extends Controller
 {
-    public function index()
+    public function index(Request $request)
     {
-        $reviews = Review::with(['user', 'product'])->get();
+        $query = Review::with(['user', 'product']);
+        if ($request->has('product_id')) {
+            $query->where('product_id', $request->input('product_id'));
+        }
+        $reviews = $query->latest()->get();
         return response()->json([
             'data' => $reviews,
             'status' => 200,
@@ -18,16 +25,92 @@ class ReviewController extends Controller
         ], 200);
     }
 
+    /**
+     * Check if a customer can review a given product (must have a delivered order)
+     */
+    public function checkEligibility(Request $request)
+    {
+        $productId = $request->input('product_id');
+        $userId = $request->user() ? $request->user()->id : $request->input('user_id');
+
+        if (!$userId && $request->bearerToken()) {
+            $token = \Laravel\Sanctum\PersonalAccessToken::findToken($request->bearerToken());
+            if ($token) {
+                $userId = $token->tokenable_id;
+            }
+        }
+
+        if (!$userId) {
+            return response()->json([
+                'can_review' => false,
+                'reason' => 'Authentication or patron ID required.',
+                'has_delivered_order' => false,
+            ], 200);
+        }
+
+        $hasDeliveredOrder = Order::where('user_id', $userId)
+            ->whereIn(DB::raw('LOWER(status)'), ['delivered', 'completed'])
+            ->whereHas('items', function ($q) use ($productId) {
+                $q->where('product_id', $productId);
+            })->exists();
+
+        $existingReview = Review::where('user_id', $userId)
+            ->where('product_id', $productId)
+            ->first();
+
+        return response()->json([
+            'can_review' => $hasDeliveredOrder,
+            'has_delivered_order' => $hasDeliveredOrder,
+            'existing_review' => $existingReview,
+            'reason' => $hasDeliveredOrder ? 'Eligible to review' : 'Product has not been delivered to this customer.',
+        ], 200);
+    }
+
     public function store(Request $request)
     {
+        $productId = $request->input('product_id');
+        $userId = $request->user() ? $request->user()->id : $request->input('user_id');
+
+        if (!$userId && $request->bearerToken()) {
+            $token = \Laravel\Sanctum\PersonalAccessToken::findToken($request->bearerToken());
+            if ($token) {
+                $userId = $token->tokenable_id;
+            }
+        }
+
+        if (!$userId) {
+            $user = User::where('role', 'customer')->first() ?? User::first();
+            $userId = $user ? $user->id : 1;
+        }
+
         $validated = $request->validate([
-            'user_id' => 'required|exists:users,id',
             'product_id' => 'required|exists:products,id',
             'rating' => 'required|integer|min:1|max:5',
             'comment' => 'nullable|string',
         ]);
 
-        $review = Review::create($validated);
+        // STRICT VERIFICATION: Verify customer has a delivered order for this product
+        $hasDeliveredOrder = Order::where('user_id', $userId)
+            ->whereIn(DB::raw('LOWER(status)'), ['delivered', 'completed'])
+            ->whereHas('items', function ($q) use ($productId) {
+                $q->where('product_id', $productId);
+            })->exists();
+
+        if (!$hasDeliveredOrder) {
+            return response()->json([
+                'status' => 403,
+                'message' => 'Review privilege is restricted to patrons who have received delivery of this product.',
+                'can_review' => false,
+            ], 403);
+        }
+
+        // Save or update review
+        $review = Review::updateOrCreate(
+            ['user_id' => $userId, 'product_id' => $productId],
+            ['rating' => $validated['rating'], 'comment' => $validated['comment'] ?? '']
+        );
+
+        $review->load(['user', 'product']);
 
         return response()->json([
             'data' => $review,

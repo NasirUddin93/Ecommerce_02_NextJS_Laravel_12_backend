@@ -24,6 +24,7 @@ use App\Http\Controllers\TransactionController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Admin\OrderController;
+use App\Http\Controllers\admin\CheckoutController;
 
 
 
@@ -32,12 +33,32 @@ use App\Http\Controllers\Admin\OrderController;
 //     return $request->user();
 // })->middleware('auth:sanctum');
 
-// Admin Authentication Login
-Route::post('/admin/login', [AuthController::class, 'authenticate']);
+// Named login route for Sanctum unauthenticated fallback
+Route::get('/login', function () {
+    return response()->json(['message' => 'Unauthenticated'], 401);
+})->name('login');
 
-// Public Product Routes
+// Admin Authentication Login & Registration
+Route::post('/admin/login', [AuthController::class, 'authenticate']);
+Route::post('/admin/register', [AuthController::class, 'register']);
+
+// Public Product, Category, Discount & Checkout Routes
 Route::get('/products', [ProductController::class, 'index']);
 Route::get('/products/{id}', [ProductController::class, 'show']);
+Route::get('/categories', [CategoryController::class, 'index']);
+Route::get('/discounts', [DiscountController::class, 'index']);
+
+// Public & Patron Review Routes
+Route::get('/reviews', [ReviewController::class, 'index']);
+Route::get('/reviews/check-eligibility', [ReviewController::class, 'checkEligibility']);
+Route::post('/reviews', [ReviewController::class, 'store']);
+
+// Public Checkout & Order endpoints
+Route::get('/checkout/draft', [CheckoutController::class, 'show']);
+Route::post('/checkout/draft', [CheckoutController::class, 'store']);
+Route::delete('/checkout/draft', [CheckoutController::class, 'destroy']);
+Route::post('/orders/place', [OrderController::class, 'store']);
+Route::get('/orders/user-orders', [OrderController::class, 'userOrders']);
 
 Route::group(['middleware' => ['auth:sanctum']], function () {
 
@@ -60,7 +81,6 @@ Route::group(['middleware' => ['auth:sanctum']], function () {
 
     // Admin Category Routes
     Route::post('/categories/', [CategoryController::class, 'store']);
-    Route::get('/categories', [CategoryController::class, 'index']);
     Route::get('/categories/{id}', [CategoryController::class, 'show']);
     Route::put('/categories/{id}', [CategoryController::class, 'update']);
     Route::delete('/categories/{id}', [CategoryController::class, 'destroy']);
@@ -123,9 +143,7 @@ Route::group(['middleware' => ['auth:sanctum']], function () {
         Route::post('order-items/{id}/restore', [OrderItemController::class, 'restore']);
         Route::delete('order-items/{id}/force-delete', [OrderItemController::class, 'forceDelete']);
 
-        // Reviews
-        Route::get('/reviews',[ReviewController::class,'index']);
-        Route::post('/reviews',[ReviewController::class,'store']);
+        // Reviews (admin operations)
         Route::get('/reviews/{id}',[ReviewController::class,'show']);
         Route::put('/reviews/{id}',[ReviewController::class,'update']);
         Route::delete('/reviews/{id}',[ReviewController::class,'destroy']); 
