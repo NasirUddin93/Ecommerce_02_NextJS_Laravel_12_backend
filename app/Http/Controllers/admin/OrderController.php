@@ -25,35 +25,76 @@ class OrderController extends Controller
     }
 
     /**
-     * 🆕 Store a new order
+     * 🆕 Store a new order in MySQL database with items
      */
     public function store(Request $request)
     {
-        $validator = Validator::make($request->all(), [
-            'user_id' => 'required|exists:users,id',
-            'total_amount' => 'required|numeric|min:0',
-            'discount_amount' => 'nullable|numeric|min:0',
-            'shipping_fee' => 'nullable|numeric|min:0',
-            'final_amount' => 'required|numeric|min:0',
-            'status' => 'required|in:pending,processing,shipped,delivered,cancelled',
-        ]);
+        $userId = $request->user() ? $request->user()->id : $request->input('user_id');
 
-        if ($validator->fails()) {
-            return response()->json([
-                'success' => false,
-                'status' => 400,
-                'errors' => $validator->errors(),
-            ], 400);
+        // Fallback user if non-logged in patron completes checkout
+        if (!$userId) {
+            $user = User::where('role', 'customer')->first() ?? User::first();
+            $userId = $user ? $user->id : 1;
         }
 
-        $order = Order::create($validator->validated());
+        $order = Order::create([
+            'user_id' => $userId,
+            'total_amount' => $request->input('total_amount', 0),
+            'discount_amount' => $request->input('discount_amount', 0),
+            'shipping_fee' => $request->input('shipping_fee', 0),
+            'final_amount' => $request->input('final_amount', 0),
+            'status' => 'pending',
+        ]);
+
+        // Attach order items
+        $items = $request->input('items', []);
+        foreach ($items as $item) {
+            $productId = isset($item['product_id']) ? $item['product_id'] : (isset($item['product']) ? $item['product']['id'] : null);
+            if ($productId) {
+                \App\Models\OrderItem::create([
+                    'order_id' => $order->id,
+                    'product_id' => $productId,
+                    'quantity' => $item['quantity'] ?? 1,
+                    'price_at_purchase' => $item['price'] ?? 0,
+                    'discount_applied' => 0,
+                ]);
+            }
+        }
+
+        $order->load(['items.product', 'user']);
 
         return response()->json([
             'success' => true,
             'status' => 200,
-            'message' => 'Order created successfully',
+            'message' => 'Order created successfully in database',
             'data' => $order
         ], 200);
+    }
+
+    /**
+     * Fetch orders for current customer / user
+     */
+    public function userOrders(Request $request)
+    {
+        $user = $request->user() ?? auth('sanctum')->user();
+        $userId = $user ? $user->id : $request->input('user_id');
+
+        if (!$userId) {
+            return response()->json([
+                'success' => true,
+                'data' => []
+            ]);
+        }
+
+        $orders = Order::where('user_id', $userId)
+            ->with(['items.product.images', 'user'])
+            ->latest()
+            ->get();
+
+        return response()->json([
+            'success' => true,
+            'data' => $orders
+        ]);
     }
 
     /**

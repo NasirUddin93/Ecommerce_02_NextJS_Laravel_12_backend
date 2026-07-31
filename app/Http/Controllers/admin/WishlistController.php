@@ -13,7 +13,7 @@ class WishlistController extends Controller
      */
     public function index()
     {
-        $wishlists = Wishlist::with(['user', 'product'])->get();
+        $wishlists = Wishlist::with(['user', 'product.images'])->get();
         return response()->json([
             'data'=>$wishlists,
             'status'=>200,

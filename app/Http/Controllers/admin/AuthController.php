@@ -49,4 +49,42 @@ class AuthController extends Controller
             ], 401);
         }
     }
+
+    /**
+     * Customer registration.
+     */
+    public function register(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'name' => 'required|string|max:255',
+            'email' => 'required|string|email|max:255|unique:users',
+            'password' => 'required|string|min:6',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'status' => 400,
+                'errors' => $validator->errors(),
+                'message' => $validator->errors()->first(),
+            ], 400);
+        }
+
+        $user = User::create([
+            'name' => $request->name,
+            'email' => $request->email,
+            'password' => bcrypt($request->password),
+            'role' => 'customer',
+        ]);
+
+        $token = $user->createToken('token')->plainTextToken;
+
+        return response()->json([
+            'status' => 200,
+            'token' => $token,
+            'id' => $user->id,
+            'name' => $user->name,
+            'email' => $user->email,
+            'role' => $user->role,
+        ], 200);
+    }
 }
