@@ -15,7 +15,7 @@ class OrderController extends Controller
      */
     public function index()
     {
-        $orders = Order::with(['user', 'items.product', 'items.variant', 'shipping.shippingMethod', 'payment'])->latest()->get();
+        $orders = Order::with(['user', 'items.product', 'items.variant', 'shipping.shippingMethod', 'payment', 'transactions'])->latest()->get();
 
         return response()->json([
             'success' => true,
@@ -37,26 +37,107 @@ class OrderController extends Controller
             $userId = $user ? $user->id : 1;
         }
 
-        $order = Order::create([
+        return \Illuminate\Support\Facades\DB::transaction(function () use ($request, $userId) {
+            $items = $request->input('items', []);
+
+            // 1. Verify stock availability and lock rows
+            foreach ($items as $item) {
+                $productId = isset($item['product_id']) ? $item['product_id'] : (isset($item['product']) ? $item['product']['id'] : null);
+                $qty = $item['quantity'] ?? 1;
+
+                if ($productId) {
+                    $product = \App\Models\Product::where('id', $productId)->lockForUpdate()->first();
+                    if (!$product || $product->stock_quantity < $qty) {
+                        $name = $product ? $product->name : "Product #{$productId}";
+                        $avail = $product ? $product->stock_quantity : 0;
+                        return response()->json([
+                            'success' => false,
+                            'status' => 422,
+                            'message' => "Insufficient stock for '{$name}'. Available stock: {$avail}, requested: {$qty}.",
+                        ], 422);
+                    }
+                }
+            }
+
+            // 2. Create Order
+            $order = Order::create([
+                'user_id' => $userId,
+                'total_amount' => $request->input('total_amount', 0),
+                'discount_amount' => $request->input('discount_amount', 0),
+                'shipping_fee' => $request->input('shipping_fee', 0),
+                'final_amount' => $request->input('final_amount', 0),
+                'status' => 'pending',
+            ]);
+
+            // 3. Attach Order items & decrement product stock
+            foreach ($items as $item) {
+                $productId = isset($item['product_id']) ? $item['product_id'] : (isset($item['product']) ? $item['product']['id'] : null);
+                $qty = $item['quantity'] ?? 1;
+
+                if ($productId) {
+                    \App\Models\OrderItem::create([
+                        'order_id' => $order->id,
+                        'product_id' => $productId,
+                        'quantity' => $qty,
+                        'price_at_purchase' => $item['price'] ?? 0,
+                        'discount_applied' => 0,
+                    ]);
+
+                    // Deduct stock quantity
+                    \App\Models\Product::where('id', $productId)->decrement('stock_quantity', $qty);
+                }
+            }
+
+        // Automatically record Transaction entry
+        $paymentMethodInput = strtolower($request->input('payment_method', 'card'));
+        $mappedMethod = 'card';
+        if (in_array($paymentMethodInput, ['bkash', 'nagad', 'mobile_banking'])) {
+            $mappedMethod = 'mobile_banking';
+        } elseif ($paymentMethodInput === 'cod') {
+            $mappedMethod = 'COD';
+        }
+
+        $trxRef = $request->input('transaction_reference') ?? ('TRX-' . strtoupper(substr(md5(time() . rand()), 0, 8)));
+        $mobileNum = $request->input('mobile_number');
+        $cardNumber = $request->input('card_number');
+
+        if ($paymentMethodInput === 'card' && $cardNumber) {
+            $cleanCard = preg_replace('/\D/', '', $cardNumber);
+            $last4 = substr($cleanCard, -4);
+            $payDetails = "**** **** **** " . ($last4 ?: "8888");
+        } elseif ($paymentMethodInput === 'card') {
+            $payDetails = "**** **** **** 8888";
+        } elseif ($mobileNum) {
+            $payDetails = $mobileNum;
+        } else {
+            $payDetails = "N/A";
+        }
+
+        $remarks = "Order #" . $order->id . " payment via " . strtoupper($paymentMethodInput) . " [" . $payDetails . "]";
+
+        \App\Models\Transaction::create([
             'user_id' => $userId,
-            'total_amount' => $request->input('total_amount', 0),
-            'discount_amount' => $request->input('discount_amount', 0),
-            'shipping_fee' => $request->input('shipping_fee', 0),
-            'final_amount' => $request->input('final_amount', 0),
-            'status' => 'pending',
+            'order_id' => $order->id,
+            'transaction_type' => 'debit',
+            'method' => $mappedMethod,
+            'transaction_reference' => $trxRef,
+            'amount' => $order->final_amount ?: $order->total_amount,
+            'currency' => 'BDT',
+            'status' => $mappedMethod === 'COD' ? 'pending' : 'success',
+            'remarks' => $remarks,
+            'processed_at' => now(),
         ]);
 
-        // Attach order items
-        $items = $request->input('items', []);
-        foreach ($items as $item) {
-            $productId = isset($item['product_id']) ? $item['product_id'] : (isset($item['product']) ? $item['product']['id'] : null);
-            if ($productId) {
-                \App\Models\OrderItem::create([
+        // Automatically record CouponUsage entry if coupon code was redeemed
+        $couponCodeInput = $request->input('coupon_code');
+        if ($couponCodeInput) {
+            $couponModel = \App\Models\Coupon::where('code', strtoupper(trim($couponCodeInput)))->first();
+            if ($couponModel) {
+                \App\Models\CouponUsage::create([
+                    'coupon_id' => $couponModel->id,
+                    'user_id' => $userId,
                     'order_id' => $order->id,
-                    'product_id' => $productId,
-                    'quantity' => $item['quantity'] ?? 1,
-                    'price_at_purchase' => $item['price'] ?? 0,
-                    'discount_applied' => 0,
+                    'used_at' => now(),
                 ]);
             }
         }
@@ -69,6 +150,7 @@ class OrderController extends Controller
             'message' => 'Order created successfully in database',
             'data' => $order
         ], 200);
+        });
     }
 
     /**
@@ -122,15 +204,6 @@ class OrderController extends Controller
      */
     public function update(Request $request, $id)
     {
-        $order = Order::find($id);
-
-        if (!$order) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Order not found',
-            ], 404);
-        }
-
         $validator = Validator::make($request->all(), [
             'user_id' => 'sometimes|exists:users,id',
             'total_amount' => 'sometimes|numeric|min:0',
@@ -140,20 +213,77 @@ class OrderController extends Controller
             'status' => 'sometimes|in:pending,processing,shipped,delivered,cancelled',
         ]);
 
-        if ($validator->fails()) {
+        return \Illuminate\Support\Facades\DB::transaction(function () use ($request, $id, $validator) {
+            $order = Order::with('items.product')->where('id', $id)->lockForUpdate()->first();
+
+            if (!$order) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Order not found',
+                ], 404);
+            }
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'errors' => $validator->errors(),
+                ], 422);
+            }
+
+            $validatedData = $validator->validated();
+            $oldStatus = $order->status;
+            $newStatus = isset($validatedData['status']) ? $validatedData['status'] : $oldStatus;
+
+            // Enforce immutable terminal status check: once delivered or cancelled, status cannot be changed
+            if (in_array(strtolower($oldStatus), ['delivered', 'cancelled']) && strtolower($newStatus) !== strtolower($oldStatus)) {
+                return response()->json([
+                    'success' => false,
+                    'status' => 422,
+                    'message' => "Order status is locked as '{$oldStatus}' and cannot be modified further.",
+                ], 422);
+            }
+
+            // Scenario A: Admin CANCELS active order -> Restore product stock
+            if ($newStatus === 'cancelled' && $oldStatus !== 'cancelled') {
+                foreach ($order->items as $item) {
+                    if ($item->product_id) {
+                        \App\Models\Product::where('id', $item->product_id)->increment('stock_quantity', $item->quantity);
+                    }
+                }
+            }
+
+            // Scenario B: Admin REACTIVATES previously cancelled order -> Deduct product stock
+            if ($oldStatus === 'cancelled' && $newStatus !== 'cancelled') {
+                foreach ($order->items as $item) {
+                    if ($item->product_id) {
+                        $product = \App\Models\Product::where('id', $item->product_id)->lockForUpdate()->first();
+                        if (!$product || $product->stock_quantity < $item->quantity) {
+                            $name = $product ? $product->name : "Product #{$item->product_id}";
+                            $avail = $product ? $product->stock_quantity : 0;
+                            return response()->json([
+                                'success' => false,
+                                'status' => 422,
+                                'message' => "Cannot reactivate order. '{$name}' has only {$avail} item(s) in stock (requested {$item->quantity}).",
+                            ], 422);
+                        }
+                    }
+                }
+
+                foreach ($order->items as $item) {
+                    if ($item->product_id) {
+                        \App\Models\Product::where('id', $item->product_id)->decrement('stock_quantity', $item->quantity);
+                    }
+                }
+            }
+
+            $order->update($validatedData);
+
             return response()->json([
-                'success' => false,
-                'errors' => $validator->errors(),
-            ], 422);
-        }
-
-        $order->update($validator->validated());
-
-        return response()->json([
-            'success' => true,
-            'message' => 'Order updated successfully',
-            'data' => $order
-        ], 200);
+                'success' => true,
+                'message' => 'Order updated successfully',
+                'data' => $order
+            ], 200);
+        });
     }
 
     /**

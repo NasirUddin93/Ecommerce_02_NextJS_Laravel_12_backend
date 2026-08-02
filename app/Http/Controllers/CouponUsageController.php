@@ -10,7 +10,7 @@ class CouponUsageController extends Controller
      // Get all coupon usages
     public function index()
     {
-        $couponUsages = CouponUsage::with(['coupon', 'user', 'order'])->get();
+        $couponUsages = CouponUsage::with(['coupon', 'user', 'order'])->latest()->get();
 
         return response()->json([
             'data' => $couponUsages,

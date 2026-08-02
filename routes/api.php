@@ -23,8 +23,9 @@ use App\Http\Controllers\ShippingMethodController;
 use App\Http\Controllers\TransactionController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
-use App\Http\Controllers\Admin\OrderController;
+use App\Http\Controllers\admin\OrderController;
 use App\Http\Controllers\admin\CheckoutController;
+use App\Http\Controllers\admin\ProductChatController;
 
 
 
@@ -45,8 +46,15 @@ Route::post('/admin/register', [AuthController::class, 'register']);
 // Public Product, Category, Discount & Checkout Routes
 Route::get('/products', [ProductController::class, 'index']);
 Route::get('/products/{id}', [ProductController::class, 'show']);
+// Public active category tree (3 levels) — must be BEFORE /categories/{id} to avoid route conflict
+Route::get('/categories/tree', [CategoryController::class, 'tree']);
 Route::get('/categories', [CategoryController::class, 'index']);
 Route::get('/discounts', [DiscountController::class, 'index']);
+Route::get('/transactions', [TransactionController::class, 'index']);
+Route::get('/orders', [OrderController::class, 'index']);
+Route::get('/coupons', [CouponController::class, 'index']);
+Route::get('/coupon-usages', [CouponUsageController::class, 'index']);
+Route::post('/coupons/verify', [CouponController::class, 'verifyCoupon']);
 
 // Public & Patron Review Routes
 Route::get('/reviews', [ReviewController::class, 'index']);
@@ -60,7 +68,20 @@ Route::delete('/checkout/draft', [CheckoutController::class, 'destroy']);
 Route::post('/orders/place', [OrderController::class, 'store']);
 Route::get('/orders/user-orders', [OrderController::class, 'userOrders']);
 
+// Public Product Variants (read-only)
+Route::get('/product-variants', [ProductVariantController::class, 'index']);
+Route::get('/product-variants/{id}', [ProductVariantController::class, 'show']);
+
+// Public Product Questions / Chat Routes
+Route::get('/products/{id}/chats', [ProductChatController::class, 'publicChats']);
+Route::post('/products/{id}/chats', [ProductChatController::class, 'storePublicChat']);
+
 Route::group(['middleware' => ['auth:sanctum']], function () {
+
+    // Customer Chats (Admin)
+    Route::get('/admin/customer-chats', [ProductChatController::class, 'indexAdminChats']);
+    Route::post('/admin/customer-chats/{id}/reply', [ProductChatController::class, 'replyAdminChat']);
+    Route::delete('/admin/customer-chats/{id}', [ProductChatController::class, 'deleteAdminChat']);
 
     // Admin Dashboard Stats
     Route::get('/dashboard/stats', [DashboardController::class, 'stats']);
@@ -106,11 +127,8 @@ Route::group(['middleware' => ['auth:sanctum']], function () {
         Route::post('/restore/{id}', [ProductController::class, 'restore']);
         Route::delete('/force-delete/{id}', [ProductController::class, 'forceDelete']);
     });
-    //Product variants
-    // Route::prefix('admin')->group(function () {
-        Route::get('/product-variants', [ProductVariantController::class, 'index']);
+    //Product variants (write only - reads are public)
         Route::post('/product-variants', [ProductVariantController::class, 'store']);
-        Route::get('/product-variants/{id}', [ProductVariantController::class, 'show']);
         Route::put('/product-variants/{id}', [ProductVariantController::class, 'update']);
         Route::delete('/product-variants/{id}', [ProductVariantController::class, 'destroy']);
     // });
@@ -160,7 +178,6 @@ Route::group(['middleware' => ['auth:sanctum']], function () {
 
 
         // Discounts
-        Route::get('/discounts',[DiscountController::class,'index']);
         Route::post('/discounts',[DiscountController::class,'store']);
         Route::get('/discounts/{id}',[DiscountController::class,'show']);
         Route::put('/discounts/{id}',[DiscountController::class,'update']);
@@ -202,7 +219,6 @@ Route::group(['middleware' => ['auth:sanctum']], function () {
         Route::delete('/order-shippings/{id}',[OrderShippingController::class,'destroy']);  
 
         // Transactions
-        Route::get('/transactions',[TransactionController::class,'index']);
         Route::post('/transactions',[TransactionController::class,'store']);
         Route::get('/transactions/{id}',[TransactionController::class,'show']);
         Route::put('/transactions/{id}',[TransactionController::class,'update']);

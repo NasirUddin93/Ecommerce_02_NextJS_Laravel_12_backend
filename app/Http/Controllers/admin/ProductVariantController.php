@@ -11,9 +11,15 @@ class ProductVariantController extends Controller
     /**
      * Display a listing of product variants.
      */
-    public function index()
+    public function index(Request $request)
     {
-        $productVariants = ProductVariant::all();
+        $query = ProductVariant::query();
+
+        if ($request->has('product_id')) {
+            $query->where('product_id', $request->product_id);
+        }
+
+        $productVariants = $query->get();
         return response()->json([
             'data'=> $productVariants,
             'status'=>200,
@@ -29,10 +35,16 @@ class ProductVariantController extends Controller
         $validated = $request->validate([
             'product_id' => 'required|exists:products,id',
             'size_id' => 'nullable|exists:sizes,id',
-            'color' => 'nullable|string|max:50',
+            'color' => 'nullable|string|max:255',
             'additional_price' => 'nullable|numeric|min:0',
             'stock_quantity' => 'required|integer|min:0',
+            'image' => 'nullable|image|mimes:jpeg,png,jpg,gif,svg,webp|max:4096',
         ]);
+
+        if ($request->hasFile('image')) {
+            $path = $request->file('image')->store('uploads/variants', 'public');
+            $validated['image'] = '/storage/' . $path;
+        }
 
         $variant = ProductVariant::create($validated);
 
@@ -62,10 +74,20 @@ class ProductVariantController extends Controller
         $validated = $request->validate([
             'product_id' => 'sometimes|exists:products,id',
             'size_id' => 'nullable|exists:sizes,id',
-            'color' => 'nullable|string|max:50',
+            'color' => 'nullable|string|max:255',
             'additional_price' => 'nullable|numeric|min:0',
             'stock_quantity' => 'sometimes|integer|min:0',
+            'image' => 'nullable|image|mimes:jpeg,png,jpg,gif,svg,webp|max:4096',
         ]);
+
+        if ($request->hasFile('image')) {
+            if ($variant->image) {
+                $oldPath = str_replace('/storage/', '', $variant->image);
+                \Illuminate\Support\Facades\Storage::disk('public')->delete($oldPath);
+            }
+            $path = $request->file('image')->store('uploads/variants', 'public');
+            $validated['image'] = '/storage/' . $path;
+        }
 
         $variant->update($validated);
 

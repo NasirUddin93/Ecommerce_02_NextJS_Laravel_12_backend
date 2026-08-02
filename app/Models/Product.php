@@ -51,4 +51,14 @@ class Product extends Model
     {
         return $this->hasMany(Wishlist::class);
     }
+
+    public function orderItems()
+    {
+        return $this->hasMany(OrderItem::class);
+    }
+
+    public function chats()
+    {
+        return $this->hasMany(ProductChat::class);
+    }
 }
