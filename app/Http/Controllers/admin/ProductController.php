@@ -15,9 +15,39 @@ class ProductController extends Controller
     /**
      * 🧾 List all products with images
      */
-    public function index()
+    public function index(Request $request)
     {
-        $products = Product::with(['category', 'brand', 'images', 'reviews.user', 'wishlists.user'])->latest()->get();
+        $query = Product::with([
+            'category',
+            'brand',
+            'images',
+            'reviews.user',
+            'wishlists.user',
+            'orderItems' => function ($q) {
+                $q->whereHas('order', function ($oq) {
+                    $oq->where('status', 'delivered');
+                });
+            }
+        ]);
+
+        // Handle status filter: 'all' returns all items, specific values filter by status
+        if ($request->has('status')) {
+            $status = $request->query('status');
+            if ($status !== 'all') {
+                $query->where('status', $status);
+            }
+        } elseif (!$request->user('sanctum') && !$request->bearerToken()) {
+            $query->where('status', 'active');
+        }
+
+        $products = $query->latest()->get();
+
+        // Append calculated delivered sales_count attribute
+        $products->transform(function ($p) {
+            $p->sales_count = $p->orderItems->sum('quantity');
+            unset($p->orderItems);
+            return $p;
+        });
 
         return response()->json([
             'success' => true,
@@ -56,6 +86,12 @@ class ProductController extends Controller
         }
 
         $product = Product::create($validator->validated());
+
+        // Explicitly persist weight since it's nullable and may be skipped
+        if ($request->has('weight') && is_numeric($request->input('weight'))) {
+            $product->weight = (float) $request->input('weight');
+            $product->save();
+        }
 
         // Handle images
         if ($request->hasFile('images')) {
@@ -109,7 +145,7 @@ class ProductController extends Controller
             'description' => 'nullable|string',
             'base_price' => 'sometimes|numeric|min:0',
             'stock_quantity' => 'sometimes|integer|min:0',
-            'weight' => 'nullable|numeric|min:0',
+            'weight' => 'sometimes|nullable|numeric|min:0',
             'is_seasonal' => 'nullable|boolean',
             'seasonal_start_date' => 'nullable|date',
             'seasonal_end_date' => 'nullable|date',
@@ -124,7 +160,14 @@ class ProductController extends Controller
             return response()->json(['success' => false, 'errors' => $validator->errors()], 422);
         }
 
-        $product->update($validator->validated());
+        $validated = $validator->validated();
+        $product->update($validated);
+
+        // Explicitly persist weight in case validated() skipped it due to nullable handling
+        if ($request->has('weight')) {
+            $product->weight = is_numeric($request->input('weight')) ? (float) $request->input('weight') : null;
+            $product->save();
+        }
 
         // Handle image deletions
         if ($request->has('images_to_delete') && is_array($request->input('images_to_delete'))) {

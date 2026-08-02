@@ -10,7 +10,7 @@ class TransactionController extends Controller
    // List all transactions
     public function index()
     {
-        $transactions = Transaction::with(['user', 'order'])->get();
+        $transactions = Transaction::with(['user', 'order.items'])->latest()->get();
 
         return response()->json([
             'data' => $transactions,
@@ -22,7 +22,7 @@ class TransactionController extends Controller
     // Show single transaction
     public function show($id)
     {
-        $transaction = Transaction::with(['user', 'order'])->findOrFail($id);
+        $transaction = Transaction::with(['user', 'order.items'])->findOrFail($id);
 
         return response()->json([
             'data' => $transaction,

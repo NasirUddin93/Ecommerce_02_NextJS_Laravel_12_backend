@@ -32,6 +32,11 @@ class Coupon extends Model
         return $this->belongsTo(User::class, 'assigned_user_id');
     }
 
+    public function usages()
+    {
+        return $this->hasMany(CouponUsage::class, 'coupon_id');
+    }
+
     // protected $casts = [
     //     'discount_value' => 'decimal:2',
     //     'min_purchase_amount' => 'decimal:2',

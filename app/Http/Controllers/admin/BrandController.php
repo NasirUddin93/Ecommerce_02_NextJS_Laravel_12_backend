@@ -22,6 +22,7 @@ class BrandController extends Controller
         $validator = Validator::make($request->all(), [
             'name' => 'required|string|max:255',
             'status' => 'required|integer|in:0,1',
+            'image' => 'nullable|image|mimes:jpeg,png,jpg,gif,svg,webp|max:4096',
         ]);
         if ($validator->fails()) {
             return response()->json([
@@ -33,13 +34,19 @@ class BrandController extends Controller
         $brand = new Brand();
         $brand->name = $request->input('name');
         $brand->status = $request->input('status');
+
+        if ($request->hasFile('image')) {
+            $path = $request->file('image')->store('uploads/brands', 'public');
+            $brand->image = '/storage/' . $path;
+        }
+
         $brand->save();
 
         return response()->json([
             'status' => 200,
             'message' => 'Brand created successfully',
             'data' => $brand,
-        ],200);
+        ], 200);
     }
     // show brand by id
     public function show($id)
@@ -69,6 +76,8 @@ class BrandController extends Controller
         }
         $validator = Validator::make($request->all(), [
             'name' => 'sometimes|required|string|max:255',
+            'status' => 'sometimes|required|integer|in:0,1',
+            'image' => 'nullable|image|mimes:jpeg,png,jpg,gif,svg,webp|max:4096',
         ]);
         if ($validator->fails()) {
             return response()->json([
@@ -77,8 +86,22 @@ class BrandController extends Controller
             ]);
         }
         // Update the brand
-        $brand->name = $request->name;
-        $brand->status = $request->status;
+        if ($request->has('name')) {
+            $brand->name = $request->name;
+        }
+        if ($request->has('status')) {
+            $brand->status = $request->status;
+        }
+
+        if ($request->hasFile('image')) {
+            if ($brand->image) {
+                $oldPath = str_replace('/storage/', '', $brand->image);
+                \Illuminate\Support\Facades\Storage::disk('public')->delete($oldPath);
+            }
+            $path = $request->file('image')->store('uploads/brands', 'public');
+            $brand->image = '/storage/' . $path;
+        }
+
         $brand->save();
 
         return response()->json([
@@ -99,6 +122,11 @@ class BrandController extends Controller
                 'status' => 404,
                 'message' => 'Brand not found',
             ], 404);
+        }
+
+        if ($brand->image) {
+            $oldPath = str_replace('/storage/', '', $brand->image);
+            \Illuminate\Support\Facades\Storage::disk('public')->delete($oldPath);
         }
 
         $brand->delete();
